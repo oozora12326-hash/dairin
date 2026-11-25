@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>物件管理 - 消防設備点検システム</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* iOS Safari ネイティブ風の操作感とデザイン調整 */
+    :root {
+      --ios-bg: #F2F2F7;
+      --ios-card: #FFFFFF;
+      --ios-blue: #007AFF;
+      --ios-blue-dark: #0062CC;
+      --ios-gray-text: #8E8E93;
+      --ios-separator: #E5E5EA;
+    }
+
+    * {
+      -webkit-tap-highlight-color: transparent;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Inter", "Noto Sans JP", sans-serif;
+      background-color: var(--ios-bg);
+      color: #1C1C1E;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+      padding-bottom: env(safe-area-inset-bottom, 24px);
+    }
+
+    /* スクロールバー非表示（クリーンな見た目） */
+    ::-webkit-scrollbar {
+      width: 0px;
+      background: transparent;
+    }
+
+    /* iOS風のガラスモーフィズムヘッダー */
+    .ios-header {
+      background-color: rgba(242, 242, 247, 0.88);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      position: sticky;
+      top: 0;
+      z-index: 30;
+      padding-top: env(safe-area-inset-top, 12px);
+    }
+
+    /* タップ時のフィードバック */
+    .ios-tap {
+      transition: transform 0.12s ease, background-color 0.15s ease, opacity 0.15s ease;
+    }
+    .ios-tap:active {
+      transform: scale(0.985);
+      opacity: 0.85;
+    }
+
+    /* モーダルアニメーション */
+    @keyframes slideUp {
+      from { transform: translateY(100%); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .modal-backdrop {
+      animation: fadeIn 0.2s ease-out forwards;
+    }
+    .modal-sheet {
+      animation: slideUp 0.28s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    }
+
+    /* 印刷用スタイル（見積書プレビュー印刷時） */
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      #printable-quote-area, #printable-quote-area * {
+        visibility: visible;
+      }
+      #printable-quote-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        background: white !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="min-h-screen select-none">
+
+  <!-- メインアプリケーションコンテナ -->
+  <div id="app" class="max-w-2xl mx-auto min-h-screen flex flex-col relative">
+    <!-- 動的に画面が描画されます -->
+  </div>
+
+  <!-- モーダル用コンテナ -->
+  <div id="modal-container"></div>
+
+  <!-- カスタムトースト通知 -->
+  <div id="toast-container" class="fixed bottom-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex flex-col items-center gap-2 w-11/12 max-w-sm"></div>
+
+  <script>
+    /**
+     * 消防設備点検 物件管理アプリケーション
+     * - iOSファイルアプリ風のUI/UX
+     * - 画面左端からの右スワイプで「戻る」操作対応
+     * - localStorage による完全ローカル永続化
+     */
+
+    // ==========================================
+    // 1. 定数・初期データ定義
+    // ==========================================
+    const STORAGE_KEY_PROPERTIES = 'fire_app_properties_v1';
+    const STORAGE_KEY_CATALOG = 'fire_app_catalog_v1';
+    const STORAGE_KEY_CATALOG_LINKS = 'fire_app_catalog_links_v1';
+    const STORAGE_KEY_LABOR_RATE = 'fire_app_labor_rate_v1';
+
+    // 進捗8ステップの定義
+// ... existing code ... -->
+    // 事務方へのメモ：同封書類リスト
+    const ENCLOSURE_ITEMS = [
+      { id: 'inspection_sheet', label: '点検表' },
+      { id: 'deficiency_list', label: '不良箇所一覧' },
+      { id: 'quotation', label: '見積り' },
+      { id: 'photo_book', label: '写真帳' },
+      { id: 'invoice', label: '請求書' }
+    ];
+
+    // 初期サンプル：参考Webカタログリンク集（ご指定の4カタログ）
+    const DEFAULT_CATALOG_LINKS = [
+      {
+        id: 'link_1',
+        title: '能美防災 (NOHMI) Webカタログ',
+        url: 'https://www.nohmi.co.jp/webcatalog_001/g_bf_2030/html5m.html#page=1'
+      },
+      {
+        id: 'link_2',
+        title: 'パナソニック 防災設備カタログ ①',
+        url: 'https://esctlg.panasonic.biz/iportal/CatalogViewInterfaceStartUpAction.do?method=startUp&mode=PAGE&catalogCategoryId=&catalogId=7670470000&pageGroupId=1&volumeID=PEWJ0001&keyword=&categoryID=&sortMode=&sortKey=&sortOrder=&designID=standard_sp&designConfirmFlg='
+      },
+      {
+        id: 'link_3',
+        title: 'パナソニック 防災設備カタログ ②',
+        url: 'https://esctlg.panasonic.biz/iportal/CatalogViewInterfaceStartUpAction.do?method=startUp&mode=PAGE&catalogCategoryId=&catalogId=7724580000&pageGroupId=1&volumeID=PEWJ0001&keyword=&categoryID=&sortMode=&sortKey=&sortOrder=&designID=standard_sp&designConfirmFlg='
+      },
+      {
+        id: 'link_4',
+        title: '初田製作所 (HATSUTA) 総合カタログ',
+        url: 'https://trusco.meclib.jp/library/books/nbcata_hatsuta/book/#target/page_no=1'
+      }
+    ];
+
+    // 初期サンプル参照カタログ（代表的な消防設備機器・定価マスタ）
+    const DEFAULT_CATALOG = [
+      { id: 'cat_1', maker: 'パナソニック', name: '煙感知器 BV454818', listPrice: 9500 },
+      { id: 'cat_2', maker: 'パナソニック', name: '差動式スポット型感知器 2種ヘッド BV42208K', listPrice: 4800 },
+      { id: 'cat_3', maker: 'パナソニック', name: '定温式スポット型感知器 特種ヘッド BV4140K', listPrice: 5200 },
+      { id: 'cat_4', maker: 'パナソニック', name: '感知器共通ベース BV4010K', listPrice: 950 },
+      { id: 'cat_5', maker: '能美防災', name: '差動式スポット型感知器 FDPJ206-D', listPrice: 5100 },
+      { id: 'cat_6', maker: '能美防災', name: '発信機 P型1級 屋内型', listPrice: 16800 },
+      { id: 'cat_7', maker: '初田製作所', name: '蓄圧式粉末(ABC)消火器 10型 PEP-10N', listPrice: 14500 },
+      { id: 'cat_8', maker: 'パナソニック', name: '誘導灯用バッテリー FK721', listPrice: 8400 }
+    ];
+
+    // 初期サンプル物件データ（すぐ動作確認できるように2件プリセット）
+// ... existing code ... -->
+    // ==========================================
+    // 2. アプリケーション状態管理
+    // ==========================================
+    const state = {
+      properties: [],
+      catalog: [],
+      catalogLinks: [],
+      catalogSearchQuery: '',
+      laborDailyRate: 30000, // 電工単価（1日8h）デフォルト 30,000円
+      searchQuery: '',
+      // 画面遷移スタック: 'home' | 'property_menu' | 'progress' | 'deficiency' | 'admin_memo' | 'quote_step1' | 'quote_step2' | 'quote_preview' | 'catalog'
+      currentScreen: 'home',
+      previousScreenBeforeCatalog: 'quote_step1',
+      selectedPropertyId: null,
+      // 一時編集用ステート
+      memoForm: null,
+      quoteForm: null
+    };
+
+    // ローカルストレージからデータ読み込み
+    function loadData() {
+      try {
+        const savedProps = localStorage.getItem(STORAGE_KEY_PROPERTIES);
+        if (savedProps) {
+          state.properties = JSON.parse(savedProps);
+        } else {
+          state.properties = JSON.parse(JSON.stringify(DEFAULT_PROPERTIES));
+          saveProperties();
+        }
+
+        const savedCatalog = localStorage.getItem(STORAGE_KEY_CATALOG);
+        if (savedCatalog) {
+          state.catalog = JSON.parse(savedCatalog);
+        } else {
+          state.catalog = JSON.parse(JSON.stringify(DEFAULT_CATALOG));
+          saveCatalog();
+        }
+
+        const savedLinks = localStorage.getItem(STORAGE_KEY_CATALOG_LINKS);
+        if (savedLinks) {
+          state.catalogLinks = JSON.parse(savedLinks);
+        } else {
+          state.catalogLinks = JSON.parse(JSON.stringify(DEFAULT_CATALOG_LINKS));
+          saveCatalogLinks();
+        }
+
+        const savedLabor = localStorage.getItem(STORAGE_KEY_LABOR_RATE);
+        if (savedLabor) {
+          state.laborDailyRate = Number(savedLabor) || 30000;
+        }
+      } catch (e) {
+        console.error('データ読み込みエラー:', e);
+        state.properties = JSON.parse(JSON.stringify(DEFAULT_PROPERTIES));
+        state.catalog = JSON.parse(JSON.stringify(DEFAULT_CATALOG));
+        state.catalogLinks = JSON.parse(JSON.stringify(DEFAULT_CATALOG_LINKS));
+      }
+    }
+
+    function saveProperties() {
+      try {
+        localStorage.setItem(STORAGE_KEY_PROPERTIES, JSON.stringify(state.properties));
+      } catch (e) {
+        showToast('保存容量の上限に達しました。画像サイズを小さくしてください。', 'error');
+      }
+    }
+
+    function saveCatalog() {
+      try {
+        localStorage.setItem(STORAGE_KEY_CATALOG, JSON.stringify(state.catalog));
+      } catch (e) {
+        console.error('カタログ保存エラー:', e);
+      }
+    }
+
+    function saveCatalogLinks() {
+      try {
+        localStorage.setItem(STORAGE_KEY_CATALOG_LINKS, JSON.stringify(state.catalogLinks));
+      } catch (e) {
+        console.error('カタログリンク保存エラー:', e);
+      }
+    }
+
+    function saveLaborRate() {
+// ... existing code ... -->
+                  <div class="flex items-center justify-between mb-2.5">
+                    <span class="text-xs font-bold text-gray-400">項目 #${idx + 1}</span>
+                    <div class="flex items-center gap-2">
+                      ${matched ? `
+                        <span class="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">
+                          定価 ¥${formatYen(matched.listPrice)}
+                        </span>
+                      ` : `
+                        <span class="text-[11px] text-gray-400">カタログ未登録</span>
+                      `}
+                      <button
+                        type="button"
+                        onclick="openCatalogPickerModal(${idx})"
+                        class="text-[11px] font-bold text-[#007AFF] bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-md"
+                      >
+                        カタログ選択
+                      </button>
+                      ${qForm.items.length > 1 ? `
+                        <button
+                          type="button"
+                          onclick="removeQuoteItemRow(${idx})"
+                          class="text-xs font-bold text-red-500 px-2 py-0.5 rounded-md hover:bg-red-50"
+                        >
+                          削除
+                        </button>
+                      ` : ''}
+                    </div>
+                  </div>
+
+                  <div class="space-y-2.5">
+                    <div>
+                      <label class="block text-[11px] font-bold text-gray-500 mb-1">器具（内容）名</label>
+                      <input
+                        type="text"
+                        list="catalog-names-list"
+                        value="${escapeHtml(item.name)}"
+                        oninput="updateQuoteItemField(${idx}, 'name', this.value)"
+                        placeholder="例: 煙感知器 BV454818"
+                        class="w-full rounded-xl bg-gray-50 border border-gray-200 px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]/40"
+                      />
+                    </div>
+
+                    <div class="grid grid-cols-3 gap-2.5">
+                      <div class="col-span-2">
+                        <label class="block text-[11px] font-bold text-gray-500 mb-1">メーカー</label>
+                        <input
+                          type="text"
+                          list="catalog-makers-list"
+                          value="${escapeHtml(item.maker)}"
+                          oninput="updateQuoteItemField(${idx}, 'maker', this.value)"
+                          placeholder="例: パナソニック"
+                          class="w-full rounded-xl bg-gray-50 border border-gray-200 px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]/40"
+                        />
+                      </div>
+                      <div>
+                        <label class="block text-[11px] font-bold text-gray-500 mb-1">個数</label>
+                        <input
+                          type="number"
+                          inputmode="numeric"
+                          min="1"
+                          value="${escapeHtml(item.qty)}"
+                          oninput="updateQuoteItemField(${idx}, 'qty', this.value)"
+                          class="w-full text-center font-bold rounded-xl bg-gray-50 border border-gray-200 px-2 py-2.5 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]/40"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+
+          <!-- 器具行追加ボタン -->
+          <button
+            type="button"
+            onclick="addQuoteItemRow()"
+            class="ios-tap w-full py-3 rounded-2xl border-2 border-dashed border-blue-300 bg-blue-50/40 text-[#007AFF] font-bold text-sm flex items-center justify-center gap-1.5 mb-6"
+          >
+            <svg class="w-4 h-4 stroke-[2.5]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            <span>器具（内容）を追加</span>
+          </button>
+
+          <!-- 次へボタン -->
+          <button
+            type="button"
+            onclick="goToQuoteStep2()"
+            class="ios-tap w-full bg-[#007AFF] hover:bg-[#0062CC] text-white font-bold text-[16px] py-3.5 rounded-2xl shadow-sm"
+          >
+            次へ
+          </button>
+        </main>
+      `;
+    }
+
+    // --- 画面5-2: 4. 見積書（ステップ2: 人数・時間プルダウン選択） ---
+    function renderQuoteStep2Screen() {
+      const prop = getSelectedProperty();
+      if (!prop) return renderHomeScreen();
+      const qForm = state.quoteForm;
+
+      const workerOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+      const hourOptions = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16];
+
+      // リアルタイム概算施工費表示
+      const hourlyRate = state.laborDailyRate / 8;
+      const estimatedLaborCost = Math.round(hourlyRate * (Number(qForm.workers) || 1) * (Number(qForm.hours) || 1));
+
+      return `
+        ${renderSubHeader({ title: '施工人員・時間の選択', backLabel: '器具入力へ' })}
+
+        <main class="flex-1 px-4 pt-4 pb-24">
+          <div class="flex items-center justify-between text-xs font-bold text-gray-500 mb-3 px-1">
+            <span>STEP 1. 器具・掛け率</span>
+            <span>→</span>
+            <span class="text-[#007AFF]">STEP 2. 人数・時間選択</span>
+            <span>→</span>
+            <span>見積書作成</span>
+          </div>
+
+          <div class="bg-white rounded-2xl p-5 shadow-xs border border-gray-100 space-y-5 mb-6">
+            <div>
+              <h2 class="text-base font-bold text-gray-900">施工工事費用の条件を選択</h2>
+              <p class="text-xs text-gray-500 mt-0.5">
+                現在の電工単価（1日8h）: <span class="font-bold text-gray-800">¥${formatYen(state.laborDailyRate)}</span>
+                （1時間あたり ¥${formatYen(hourlyRate)}）
+              </p>
+            </div>
+
+            <!-- 人数プルダウン -->
+            <div>
+              <label class="block text-xs font-bold text-gray-600 mb-1.5">作業人数</label>
+              <div class="relative">
+                <select
+                  onchange="updateQuoteLabor('workers', this.value)"
+                  class="w-full appearance-none rounded-xl bg-gray-50 border border-gray-200 px-4 py-3.5 text-base font-bold text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]"
+                >
+                  ${workerOptions.map(w => `
+                    <option value="${w}" ${Number(qForm.workers) === w ? 'selected' : ''}>${w} 名</option>
+                  `).join('')}
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-gray-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <!-- 時間プルダウン -->
+            <div>
+              <label class="block text-xs font-bold text-gray-600 mb-1.5">作業時間</label>
+              <div class="relative">
+                <select
+                  onchange="updateQuoteLabor('hours', this.value)"
+                  class="w-full appearance-none rounded-xl bg-gray-50 border border-gray-200 px-4 py-3.5 text-base font-bold text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]"
+                >
+                  ${hourOptions.map(h => `
+                    <option value="${h}" ${Number(qForm.hours) === h ? 'selected' : ''}>${h} 時間 ${h === 8 ? '（1日人工）' : h === 4 ? '（半日人工）' : ''}</option>
+                  `).join('')}
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-3.5 flex items-center text-gray-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </div>
+              </div>
+            </div>
+
+            <!-- 施工工事費用プレビュー -->
+            <div class="bg-blue-50/70 border border-blue-100 rounded-xl p-3.5 flex items-center justify-between">
+              <span class="text-xs font-bold text-gray-700">算出される施工工事費用</span>
+              <span class="text-lg font-bold text-[#007AFF]">¥${formatYen(estimatedLaborCost)}</span>
+            </div>
+          </div>
+
+          <!-- 「この情報で作成」ボタン -->
+          <button
+            type="button"
+            onclick="createQuotationPreview()"
+            class="ios-tap w-full bg-[#007AFF] hover:bg-[#0062CC] text-white font-bold text-[16px] py-3.5 rounded-2xl shadow-sm"
+          >
+            この情報で作成
+          </button>
+        </main>
+      `;
+    }
+
+    // --- 画面5-3: 4. 見積書プレビュー画面 ---
+    function renderQuotePreviewScreen() {
+      const prop = getSelectedProperty();
+      if (!prop) return renderHomeScreen();
+      const qForm = state.quoteForm;
+      const rateRatio = (Number(qForm.rate) || 70) / 100;
+
+      // 各器具の計算
+      let materialSubtotal = 0;
+      const calculatedRows = qForm.items
+        .filter(item => item.name.trim() !== '')
+        .map(item => {
+          const matched = findCatalogMatch(item.name, item.maker);
+          const listPrice = matched ? Number(matched.listPrice) : 0;
+          const unitPrice = Math.round(listPrice * rateRatio);
+          const qty = Number(item.qty) || 1;
+          const amount = unitPrice * qty;
+          materialSubtotal += amount;
+          return {
+            name: item.name,
+            maker: item.maker || (matched ? matched.maker : '-'),
+            qty,
+            listPrice,
+            unitPrice,
+            amount,
+            isMatched: !!matched
+          };
+        });
+
+      // 施工工事費用の算出: 人数 × 時間 × (電工単価 / 8)
+      const workers = Number(qForm.workers) || 1;
+      const hours = Number(qForm.hours) || 1;
+      const hourlyRate = state.laborDailyRate / 8;
+      const laborCost = Math.round(hourlyRate * workers * hours);
+
+      const subtotal = materialSubtotal + laborCost;
+      const tax = Math.round(subtotal * 0.1);
+      const grandTotal = subtotal + tax;
+
+      const todayStr = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+
+      return `
+        ${renderSubHeader({
+          title: '御見積書プレビュー',
+          backLabel: '条件修正',
+          rightHtml: `
+            <button
+              type="button"
+              onclick="window.print()"
+              class="ios-tap text-xs font-bold text-[#007AFF] bg-blue-50 px-2.5 py-1.5 rounded-lg no-print"
+            >
+              印刷/PDF
+            </button>
+          `
+        })}
+
+        <main class="flex-1 px-4 pt-4 pb-24">
+          <!-- フォーマット追加予定の案内バナー -->
+          <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4 text-xs text-amber-800 flex items-center justify-between gap-2 no-print">
+            <span>※ 現在は標準レイアウトで自動算出しています。専用の見積書フォーマットをお送りいただき次第差し替えます。</span>
+          </div>
+
+          <!-- 見積書本体カード -->
+          <div id="printable-quote-area" class="bg-white rounded-2xl p-5 shadow-xs border border-gray-200">
+            <div class="border-b-2 border-gray-900 pb-3 mb-4 flex items-end justify-between">
+              <div>
+                <h2 class="text-xl font-bold tracking-widest text-gray-900">御 見 積 書</h2>
+                <p class="text-xs text-gray-500 mt-1">発行日: ${todayStr}</p>
+              </div>
+              <div class="text-right text-xs text-gray-600">
+                <p>担当: ${escapeHtml(prop.assignee)}</p>
+              </div>
+            </div>
+
+            <div class="mb-4">
+              <p class="text-xs text-gray-500">件名・物件名</p>
+              <p class="text-base font-bold text-gray-900 border-b border-gray-300 pb-1">
+                ${escapeHtml(prop.name)} 消防設備改修工事
+              </p>
+            </div>
+
+            <!-- 合計金額ボックス -->
+            <div class="bg-gray-50 border border-gray-200 rounded-xl p-3.5 mb-5 flex items-center justify-between">
+              <span class="text-xs font-bold text-gray-600">御見積合計金額（税込）</span>
+              <span class="text-2xl font-bold text-gray-900">¥${formatYen(grandTotal)}</span>
+            </div>
+
+            <!-- 明細テーブル -->
+            <div class="overflow-x-auto">
+              <table class="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr class="border-y border-gray-300 bg-gray-50 text-gray-600">
+                    <th class="py-2 px-2 font-bold">器具・工事内容</th>
+                    <th class="py-2 px-1.5 text-center font-bold">数量</th>
+                    <th class="py-2 px-1.5 text-right font-bold">単価</th>
+                    <th class="py-2 px-2 text-right font-bold">金額</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200">
+                  ${calculatedRows.map(row => `
+                    <tr>
+                      <td class="py-2.5 px-2">
+                        <div class="font-bold text-gray-900">${escapeHtml(row.name)}</div>
+                        <div class="text-[10px] text-gray-500">
+                          メーカー: ${escapeHtml(row.maker)}
+                          ${row.isMatched ? ` / 定価 ¥${formatYen(row.listPrice)} × ${qForm.rate}%` : ' (カタログ未登録のため0円)'}
+                        </div>
+                      </td>
+                      <td class="py-2.5 px-1.5 text-center whitespace-nowrap">${row.qty}</td>
+                      <td class="py-2.5 px-1.5 text-right whitespace-nowrap">¥${formatYen(row.unitPrice)}</td>
+                      <td class="py-2.5 px-2 text-right font-semibold whitespace-nowrap">¥${formatYen(row.amount)}</td>
+                    </tr>
+                  `).join('')}
+
+                  <!-- 施工工事費用行 -->
+                  <tr class="bg-blue-50/30">
+                    <td class="py-2.5 px-2">
+                      <div class="font-bold text-gray-900">施工工事費用（技術料）</div>
+                      <div class="text-[10px] text-gray-500">
+                        作業員 ${workers}名 × ${hours}時間（電工単価 ¥${formatYen(state.laborDailyRate)}/8h）
+                      </div>
+                    </td>
+                    <td class="py-2.5 px-1.5 text-center whitespace-nowrap">1式</td>
+                    <td class="py-2.5 px-1.5 text-right whitespace-nowrap">¥${formatYen(laborCost)}</td>
+                    <td class="py-2.5 px-2 text-right font-semibold whitespace-nowrap">¥${formatYen(laborCost)}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- 小計・消費税・合計 -->
+            <div class="mt-4 pt-3 border-t border-gray-300 space-y-1.5 text-xs">
+              <div class="flex justify-between text-gray-600">
+                <span>小計（税抜）</span>
+                <span class="font-semibold">¥${formatYen(subtotal)}</span>
+              </div>
+              <div class="flex justify-between text-gray-600">
+                <span>消費税（10%）</span>
+                <span class="font-semibold">¥${formatYen(tax)}</span>
+              </div>
+              <div class="flex justify-between text-sm font-bold text-gray-900 pt-1.5 border-t border-gray-200">
+                <span>合計金額（税込）</span>
+                <span>¥${formatYen(grandTotal)}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- アクションボタン -->
+          <div class="mt-5 grid grid-cols-2 gap-3 no-print">
+            <button
+              type="button"
+              onclick="navigateTo('quote_step1')"
+              class="ios-tap bg-white border border-gray-200 text-gray-700 font-bold text-sm py-3 rounded-2xl shadow-2xs"
+            >
+              内容を修正する
+            </button>
+            <button
+              type="button"
+              onclick="navigateTo('property_menu')"
+              class="ios-tap bg-[#007AFF] text-white font-bold text-sm py-3 rounded-2xl shadow-xs"
+            >
+              物件メニューへ戻る
+            </button>
+          </div>
+        </main>
+      `;
+    }
+
+    // --- 画面6: 参照カタログ＆電工単価管理画面 ---
+    function renderCatalogScreen() {
+      const cq = state.catalogSearchQuery.trim().toLowerCase();
+      const filteredCatalog = state.catalog.filter(item =>
+        item.name.toLowerCase().includes(cq) || item.maker.toLowerCase().includes(cq)
+      );
+
+      return `
+        ${renderSubHeader({ title: '参照カタログ・電工単価', backLabel: '戻る' })}
+
+        <main class="flex-1 px-4 pt-4 pb-24 space-y-5">
+          <!-- 1. メーカーWebカタログリンク集（追加・削除可能） -->
+          <section class="bg-white rounded-2xl p-4 shadow-xs border border-gray-100">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <span class="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md">外部デジタルカタログ</span>
+                <h2 class="text-sm font-bold text-gray-900 mt-1">参考Webカタログ一覧</h2>
+              </div>
+              <button
+                type="button"
+                onclick="openAddCatalogLinkModal()"
+                class="ios-tap text-xs font-bold text-white bg-[#007AFF] hover:bg-[#0062CC] px-3 py-2 rounded-xl shadow-2xs flex items-center gap-1"
+              >
+                <span>+ URL追加</span>
+              </button>
+            </div>
+            <p class="text-[11px] text-gray-500 mb-3 leading-relaxed">
+              タップすると別タブでメーカー公式カタログが開きます。型番と定価を確認し、下の「器具・定価マスタ」へ登録しておくと見積書で自動計算されます。
+            </p>
+
+            ${state.catalogLinks.length === 0 ? `
+              <div class="p-6 text-center bg-gray-50 rounded-xl text-xs text-gray-400">
+                登録されたWebカタログリンクがありません
+              </div>
+            ` : `
+              <div class="space-y-2">
+                ${state.catalogLinks.map(link => `
+                  <div class="flex items-center justify-between gap-2 p-3 rounded-xl bg-gray-50 border border-gray-200/80 hover:border-blue-300 transition">
+                    <a
+                      href="${escapeHtml(link.url)}"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="ios-tap flex-1 flex items-center gap-2.5 min-w-0 text-left"
+                    >
+                      <div class="w-9 h-9 rounded-lg bg-blue-100 text-[#007AFF] flex items-center justify-center shrink-0">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                        </svg>
+                      </div>
+                      <div class="min-w-0 flex-1">
+                        <p class="text-sm font-bold text-[#007AFF] truncate flex items-center gap-1">
+                          <span class="truncate">${escapeHtml(link.title)}</span>
+                          <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                          </svg>
+                        </p>
+                        <p class="text-[10px] text-gray-400 truncate mt-0.5">${escapeHtml(link.url)}</p>
+                      </div>
+                    </a>
+                    <button
+                      type="button"
+                      onclick="confirmDeleteCatalogLink('${link.id}')"
+                      class="px-2.5 py-1.5 text-xs font-bold text-red-500 bg-white border border-gray-200 hover:bg-red-50 rounded-lg shrink-0"
+                    >
+                      削除
+                    </button>
+                  </div>
+                `).join('')}
+              </div>
+            `}
+          </section>
+
+          <!-- 2. 電工単価（1日8h）設定カード -->
+          <section class="bg-white rounded-2xl p-4 shadow-xs border border-gray-100">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <span class="text-[11px] font-bold text-[#007AFF] bg-blue-50 px-2 py-0.5 rounded-md">施工費算出基準</span>
+                <h2 class="text-sm font-bold text-gray-900 mt-1">電工単価（1日8h）</h2>
+                <p class="text-[11px] text-gray-500">1時間あたり ¥${formatYen(state.laborDailyRate / 8)} で自動計算</p>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-sm font-bold text-gray-500">¥</span>
+                <input
+                  type="number"
+                  inputmode="numeric"
+                  value="${escapeHtml(state.laborDailyRate)}"
+                  onchange="updateLaborDailyRate(this.value)"
+                  class="w-28 text-right font-bold text-base text-gray-900 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]"
+                />
+              </div>
+            </div>
+          </section>
+
+          <!-- 3. 見積自動計算用：器具・定価マスタ追加フォーム -->
+          <section class="bg-white rounded-2xl p-4 shadow-xs border border-gray-100">
+            <div class="mb-3">
+              <span class="text-[11px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md">見積書自動計算マスタ</span>
+              <h2 class="text-sm font-bold text-gray-900 mt-1">器具・定価を登録（カタログ参照値の記録）</h2>
+            </div>
+            <div class="space-y-2.5">
+              <div>
+                <label class="block text-[11px] font-bold text-gray-500 mb-1">器具（内容）・型番名</label>
+                <input
+                  type="text"
+                  id="new-cat-name"
+                  placeholder="例: 煙感知器 BV454818"
+                  class="w-full rounded-xl bg-gray-50 border border-gray-200 px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]/40"
+                />
+              </div>
+              <div class="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label class="block text-[11px] font-bold text-gray-500 mb-1">メーカー</label>
+                  <input
+                    type="text"
+                    id="new-cat-maker"
+                    placeholder="例: パナソニック"
+                    class="w-full rounded-xl bg-gray-50 border border-gray-200 px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]/40"
+                  />
+                </div>
+                <div>
+                  <label class="block text-[11px] font-bold text-gray-500 mb-1">カタログ定価（円）</label>
+                  <input
+                    type="number"
+                    inputmode="numeric"
+                    id="new-cat-price"
+                    placeholder="例: 9500"
+                    class="w-full rounded-xl bg-gray-50 border border-gray-200 px-3 py-2.5 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]/40"
+                  />
+                </div>
+              </div>
+              <button
+                type="button"
+                onclick="addCatalogItem()"
+                class="ios-tap w-full bg-[#007AFF] hover:bg-[#0062CC] text-white font-bold text-sm py-3 rounded-xl mt-1 shadow-2xs"
+              >
+                + 器具・定価を登録
+              </button>
+            </div>
+          </section>
+
+          <!-- 4. 登録済み器具・定価一覧 -->
+          <section>
+            <div class="flex items-center justify-between px-1 mb-2">
+              <h2 class="text-xs font-bold text-gray-500">登録済み器具・定価リスト（${filteredCatalog.length}件）</h2>
+            </div>
+
+            <!-- 器具検索バー -->
+            <div class="mb-2.5">
+              <input
+                type="search"
+                value="${escapeHtml(state.catalogSearchQuery)}"
+                oninput="handleCatalogSearchInput(this.value)"
+                placeholder="登録済みの器具名・メーカーで絞り込み"
+                class="w-full bg-white border border-gray-200 text-gray-900 placeholder-gray-400 text-xs rounded-xl px-3.5 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#007AFF]/40"
+              />
+            </div>
+
+            <div class="bg-white rounded-2xl shadow-xs border border-gray-100 divide-y divide-gray-100 overflow-hidden">
+              ${filteredCatalog.length === 0 ? `
+                <div class="p-8 text-center text-xs text-gray-400">一致する器具が登録されていません</div>
+              ` : filteredCatalog.map(item => `
+                <div class="p-3.5 flex items-center justify-between gap-2">
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-bold text-gray-900 truncate">${escapeHtml(item.name)}</p>
+                    <div class="flex items-center gap-2 mt-0.5 text-xs text-gray-500">
+                      <span>メーカー: ${escapeHtml(item.maker)}</span>
+                      <span>•</span>
+                      <span class="font-bold text-[#007AFF]">定価 ¥${formatYen(item.listPrice)}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onclick="confirmDeleteCatalogItem('${item.id}')"
+                    class="px-2.5 py-1.5 text-xs font-bold text-red-500 bg-red-50 hover:bg-red-100 rounded-lg shrink-0"
+                  >
+                    削除
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          </section>
+        </main>
+      `;
+    }
+
+    // ==========================================
+    // 6. インタラクション・データ操作ハンドラ
+    // ==========================================
+// ... existing code ... -->
+    // 参照カタログ・電工単価・Webリンク操作
+    function handleCatalogSearchInput(val) {
+      state.catalogSearchQuery = val;
+      render();
+    }
+
+    // 見積入力行から直接カタログ選択できるピッカーモーダル
+    function openCatalogPickerModal(itemIdx) {
+      const modalContainer = document.getElementById('modal-container');
+      modalContainer.innerHTML = `
+        <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-xs modal-backdrop" onclick="closeModal()">
+          <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md max-h-[80vh] flex flex-col overflow-hidden shadow-2xl modal-sheet" onclick="event.stopPropagation()">
+            <div class="p-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 class="text-base font-bold text-gray-900">登録済みカタログから選択</h3>
+              <button type="button" onclick="closeModal()" class="text-xs font-bold text-gray-500 px-2.5 py-1 bg-gray-100 rounded-lg">閉じる</button>
+            </div>
+            <div class="flex-1 overflow-y-auto divide-y divide-gray-100">
+              ${state.catalog.length === 0 ? `
+                <div class="p-8 text-center text-xs text-gray-400">カタログに器具が登録されていません</div>
+              ` : state.catalog.map(cat => `
+                <button
+                  type="button"
+                  onclick="selectCatalogForQuoteRow(${itemIdx}, '${cat.id}')"
+                  class="w-full p-3.5 text-left hover:bg-blue-50/60 active:bg-blue-50 flex items-center justify-between gap-2 transition"
+                >
+                  <div class="min-w-0 flex-1">
+                    <p class="text-sm font-bold text-gray-900 truncate">${escapeHtml(cat.name)}</p>
+                    <p class="text-xs text-gray-500 mt-0.5">${escapeHtml(cat.maker)}</p>
+                  </div>
+                  <span class="text-xs font-bold text-[#007AFF] bg-blue-50 px-2.5 py-1 rounded-lg shrink-0">
+                    定価 ¥${formatYen(cat.listPrice)}
+                  </span>
+                </button>
+              `).join('')}
+            </div>
+            <div class="p-3 bg-gray-50 border-t border-gray-100">
+              <button
+                type="button"
+                onclick="closeModal(); navigateTo('catalog');"
+                class="w-full py-2.5 text-xs font-bold text-[#007AFF] bg-white border border-blue-200 rounded-xl"
+              >
+                + 新しい器具・Webカタログを管理する
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function selectCatalogForQuoteRow(itemIdx, catId) {
+      const cat = state.catalog.find(c => c.id === catId);
+      if (!cat || !state.quoteForm || !state.quoteForm.items[itemIdx]) return;
+      state.quoteForm.items[itemIdx].name = cat.name;
+      state.quoteForm.items[itemIdx].maker = cat.maker;
+      syncQuoteDraft();
+      closeModal();
+      render();
+      showToast(`「${cat.name}」を選択しました`);
+    }
+
+    // 参考WebカタログURL追加モーダル
+    function openAddCatalogLinkModal() {
+      const modalContainer = document.getElementById('modal-container');
+      modalContainer.innerHTML = `
+        <div class="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-xs modal-backdrop" onclick="closeModal()">
+          <div class="bg-white rounded-t-3xl sm:rounded-3xl w-full max-w-md p-5 pb-8 sm:pb-6 shadow-2xl modal-sheet" onclick="event.stopPropagation()">
+            <div class="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4 sm:hidden"></div>
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-lg font-bold text-gray-900">参考Webカタログを追加</h3>
+              <button type="button" onclick="closeModal()" class="text-sm font-medium text-gray-400 hover:text-gray-600">閉じる</button>
+            </div>
+            <form onsubmit="submitNewCatalogLink(event)" class="space-y-4">
+              <div>
+                <label class="block text-xs font-bold text-gray-600 mb-1.5">カタログ名・メーカー名 <span class="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  id="input-link-title"
+                  required
+                  placeholder="例: ヤマトプロテック 総合カタログ"
+                  class="w-full rounded-xl bg-gray-50 border border-gray-200 px-3.5 py-3 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]"
+                />
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-gray-600 mb-1.5">カタログURL <span class="text-red-500">*</span></label>
+                <input
+                  type="url"
+                  id="input-link-url"
+                  required
+                  placeholder="https://..."
+                  class="w-full rounded-xl bg-gray-50 border border-gray-200 px-3.5 py-3 text-sm text-gray-900 focus:outline-none focus:bg-white focus:ring-2 focus:ring-[#007AFF]"
+                />
+              </div>
+              <div class="pt-2 flex gap-2.5">
+                <button type="button" onclick="closeModal()" class="flex-1 py-3 rounded-xl bg-gray-100 text-gray-700 font-bold text-sm">キャンセル</button>
+                <button type="submit" class="flex-1 py-3 rounded-xl bg-[#007AFF] text-white font-bold text-sm shadow-sm">追加する</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      `;
+      setTimeout(() => document.getElementById('input-link-title')?.focus(), 100);
+    }
+
+    function submitNewCatalogLink(e) {
+      e.preventDefault();
+      const title = document.getElementById('input-link-title').value.trim();
+      const url = document.getElementById('input-link-url').value.trim();
+      if (!title || !url) return;
+
+      state.catalogLinks.push({
+        id: 'link_' + Date.now(),
+        title,
+        url
+      });
+      saveCatalogLinks();
+      closeModal();
+      render();
+      showToast(`「${title}」を追加しました`);
+    }
+
+    function confirmDeleteCatalogLink(linkId) {
+      const target = state.catalogLinks.find(l => l.id === linkId);
+      if (!target) return;
+      showConfirmModal({
+        title: 'Webカタログリンクを削除',
+        message: `「${target.title}」を一覧から削除しますか？`,
+        confirmText: '削除する',
+        onConfirm: () => {
+          state.catalogLinks = state.catalogLinks.filter(l => l.id !== linkId);
+          saveCatalogLinks();
+          render();
+          showToast('カタログリンクを削除しました');
+        }
+      });
+    }
+
+    function updateLaborDailyRate(val) {
+      const num = Number(val);
+      if (num > 0) {
+        state.laborDailyRate = num;
+        saveLaborRate();
+        render();
+        showToast(`電工単価を ¥${formatYen(num)} に更新しました`);
+      }
+    }
+
+    function addCatalogItem() {
+      const nameEl = document.getElementById('new-cat-name');
+      const makerEl = document.getElementById('new-cat-maker');
+      const priceEl = document.getElementById('new-cat-price');
+
+      const name = nameEl.value.trim();
+      const maker = makerEl.value.trim() || '指定なし';
+      const listPrice = Number(priceEl.value);
+
+      if (!name || !listPrice || listPrice <= 0) {
+        showToast('器具名と定価を正しく入力してください', 'error');
+        return;
+      }
+
+      state.catalog.unshift({
+        id: 'cat_' + Date.now(),
+        name,
+        maker,
+        listPrice
+      });
+      saveCatalog();
+      render();
+      showToast(`「${name}」を登録しました`);
+    }
+
+    function confirmDeleteCatalogItem(catId) {
+      const target = state.catalog.find(c => c.id === catId);
+      if (!target) return;
+      showConfirmModal({
+        title: '登録器具を削除',
+        message: `「${target.name}」を定価リストから削除しますか？`,
+        confirmText: '削除する',
+        onConfirm: () => {
+          state.catalog = state.catalog.filter(c => c.id !== catId);
+          saveCatalog();
+          render();
+          showToast('カタログから削除しました');
+        }
+      });
+    }
+
+    // ==========================================
+    // 7. メインレンダリング関数
+    // ==========================================
+    function render() {
+      const appEl = document.getElementById('app');
+      switch (state.currentScreen) {
+        case 'home':
+          appEl.innerHTML = renderHomeScreen();
+          break;
+        case 'property_menu':
+          appEl.innerHTML = renderPropertyMenuScreen();
+          break;
+        case 'progress':
+          appEl.innerHTML = renderProgressScreen();
+          break;
+        case 'deficiency':
+          appEl.innerHTML = renderDeficiencyScreen();
+          break;
+        case 'admin_memo':
+          appEl.innerHTML = renderAdminMemoScreen();
+          break;
+        case 'quote_step1':
+          appEl.innerHTML = renderQuoteStep1Screen();
+          break;
+        case 'quote_step2':
+          appEl.innerHTML = renderQuoteStep2Screen();
+          break;
+        case 'quote_preview':
+          appEl.innerHTML = renderQuotePreviewScreen();
+          break;
+        case 'catalog':
+          appEl.innerHTML = renderCatalogScreen();
+          break;
+        default:
+          appEl.innerHTML = renderHomeScreen();
+      }
+    }
+
+    // 初期化実行
+    window.addEventListener('DOMContentLoaded', () => {
+      loadData();
+      render();
+    });
+  </script>
+</body>
+</html>
