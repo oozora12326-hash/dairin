@@ -491,6 +491,12 @@
       color: var(--text-sub);
     }
 
+    .step-checked-at {
+      font-size: 11px;
+      color: var(--text-sub);
+      margin-top: 3px;
+    }
+
     .step-arrow {
       text-align: center;
       color: #aeaeb2;
@@ -637,6 +643,22 @@
       grid-template-columns: 1fr 1fr;
       gap: 8px;
       margin-top: 8px;
+    }
+
+    .catalog-match-hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: #1e8e3e;
+      background: var(--green-light);
+      padding: 4px 8px;
+      border-radius: 6px;
+      display: inline-block;
+    }
+
+    .catalog-nomatch-hint {
+      margin-top: 6px;
+      font-size: 11px;
+      color: var(--text-sub);
     }
 
     .est-table {
@@ -824,10 +846,9 @@
 
   // ルーティング状態
   let route = {
-    view: 'home', // home | detail | progress | defects | memo | estimate_step1 | estimate_step2 | estimate_result | catalog
+    view: 'home',
     propertyId: null,
     searchQuery: '',
-    // 見積作成用の一時ドラフト
     estDraft: {
       items: [{ name: '', maker: '', qty: 1 }],
       ratePercent: 70,
@@ -852,6 +873,57 @@
 
   function formatYen(num) {
     return '¥' + Math.round(Number(num) || 0).toLocaleString('ja-JP');
+  }
+
+  function formatNowDateTime() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    return `${y}/${m}/${d} ${hh}:${mm}`;
+  }
+
+  function normalizeText(str) {
+    return String(str || '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s　]+/g, '')
+      .replace(/[（）()]/g, '');
+  }
+
+  function findCatalogMatch(name, maker) {
+    const nName = normalizeText(name);
+    const nMaker = normalizeText(maker);
+    if (!nName) return null;
+
+    // 1. 器具名・メーカー名の完全一致（正規化後）
+    let match = state.catalogItems.find(c => {
+      const cName = normalizeText(c.name);
+      const cMaker = normalizeText(c.maker);
+      return cName === nName && (!nMaker || cMaker === nMaker);
+    });
+    if (match) return match;
+
+    // 2. メーカーが一致し、器具名が部分一致
+    if (nMaker) {
+      match = state.catalogItems.find(c => {
+        const cName = normalizeText(c.name);
+        const cMaker = normalizeText(c.maker);
+        return cMaker.includes(nMaker) || nMaker.includes(cMaker)
+          ? (cName.includes(nName) || nName.includes(cName))
+          : false;
+      });
+      if (match) return match;
+    }
+
+    // 3. 器具名のみで部分一致
+    match = state.catalogItems.find(c => {
+      const cName = normalizeText(c.name);
+      return cName.includes(nName) || nName.includes(cName);
+    });
+    return match || null;
   }
 
   function navigate(view, propertyId = route.propertyId) {
@@ -947,6 +1019,7 @@
       staff: staff || '未設定',
       createdAt: new Date().toLocaleDateString('ja-JP'),
       progress: {},
+      progressTimestamps: {},
       flyer: null,
       defectMemo: '',
       officeMemo: null,
@@ -1157,7 +1230,15 @@
     const prop = getCurrentProperty();
     if (!prop) return;
     if (!prop.progress) prop.progress = {};
-    prop.progress[key] = !prop.progress[key];
+    if (!prop.progressTimestamps) prop.progressTimestamps = {};
+
+    const nextState = !prop.progress[key];
+    prop.progress[key] = nextState;
+    if (nextState) {
+      prop.progressTimestamps[key] = formatNowDateTime();
+    } else {
+      delete prop.progressTimestamps[key];
+    }
     saveState();
     render();
   }
@@ -1193,6 +1274,7 @@
 
     const stepsHtml = PROGRESS_STEPS.map((step, idx) => {
       const checked = Boolean(prop.progress && prop.progress[step.key]);
+      const checkedAt = prop.progressTimestamps && prop.progressTimestamps[step.key];
       const arrow = idx < PROGRESS_STEPS.length - 1
         ? `<div class="step-arrow">↓</div>`
         : '';
@@ -1233,6 +1315,7 @@
               <span class="step-title">${step.label}</span>
               <span class="badge ${checked ? 'badge-green' : 'badge-blue'}">${checked ? '完了' : '未完了'}</span>
             </div>
+            ${checked && checkedAt ? `<div class="step-checked-at">チェック日時: ${escapeHtml(checkedAt)}</div>` : ''}
             ${flyerHtml}
           </div>
         </div>
@@ -1330,7 +1413,7 @@
       shippingAddress,
       docs: checkedDocs,
       otherDoc,
-      updatedAt: new Date().toLocaleString('ja-JP')
+      updatedAt: formatNowDateTime()
     };
 
     saveState();
@@ -1367,7 +1450,6 @@
       </div>
 
       <div class="content">
-        <!-- 保存すると最上段に見やすく表示 -->
         ${renderPinnedMemoCard(prop, false)}
 
         <div class="card-group card-padding">
@@ -1554,11 +1636,11 @@
 
         <!-- 器具・定価マスタ記録 -->
         <div class="section-header">
-          <span>📦 参照カタログ器具・定価リスト（自動計算用）</span>
+          <span>📦 参照カタログ器具・定価リスト（自動読取用）</span>
         </div>
         <div class="card-group card-padding">
           <div style="font-size:13px;color:var(--text-sub);margin-bottom:10px;">
-            上記Webカタログで確認した器具名・メーカー・定価を記録しておくと、見積書作成時に自動で定価を読み取り掛け率計算を行います。
+            上記Webカタログで確認した器具名・メーカー・定価を記録しておくと、見積書作成時に器具名・メーカーから自動で定価を読み取り掛け率計算を行います。
           </div>
           <div class="form-group">
             <input type="text" id="newCatItemName" class="form-control" placeholder="器具（内容）名（例：差動式スポット型感知器 2種）" />
@@ -1614,6 +1696,27 @@
     render();
   }
 
+  function updateEstimateItemField(idx, field, value) {
+    if (!route.estDraft.items[idx]) return;
+    route.estDraft.items[idx][field] = value;
+
+    const hintEl = document.getElementById(`catHint_${idx}`);
+    if (hintEl) {
+      const item = route.estDraft.items[idx];
+      const matched = findCatalogMatch(item.name, item.maker);
+      if (matched) {
+        hintEl.className = 'catalog-match-hint';
+        hintEl.textContent = `✓ カタログ読取: ${matched.name}（${matched.maker} / 定価 ${formatYen(matched.listPrice)}）`;
+      } else if (item.name.trim()) {
+        hintEl.className = 'catalog-nomatch-hint';
+        hintEl.textContent = `※ カタログに一致データなし（作成時に¥0扱い。右上の参照カタログから追加可能）`;
+      } else {
+        hintEl.className = 'catalog-nomatch-hint';
+        hintEl.textContent = `器具名・メーカーを入力するとカタログから自動読取します`;
+      }
+    }
+  }
+
   function openCatalogPickerForRow(rowIdx) {
     openModal(`
       <div class="modal-header">
@@ -1658,45 +1761,56 @@
     const prop = getCurrentProperty();
     if (!prop) return navigate('home');
 
-    const rowsHtml = route.estDraft.items.map((item, idx) => `
-      <div class="equip-row">
-        <div class="row-between" style="margin-bottom:6px;">
-          <span style="font-size:13px;font-weight:700;color:var(--blue);">項目 #${idx + 1}</span>
-          <div class="row-flex">
-            <button class="btn-secondary" style="padding:4px 8px;font-size:12px;" onclick="openCatalogPickerForRow(${idx})">📖 カタログ選択</button>
-            <button class="btn-danger-soft" style="padding:4px 8px;font-size:12px;" onclick="removeEstimateRow(${idx})">削除</button>
+    const rowsHtml = route.estDraft.items.map((item, idx) => {
+      const matched = findCatalogMatch(item.name, item.maker);
+      let hintHtml = `<div id="catHint_${idx}" class="catalog-nomatch-hint">器具名・メーカーを入力するとカタログから自動読取します</div>`;
+      if (matched) {
+        hintHtml = `<div id="catHint_${idx}" class="catalog-match-hint">✓ カタログ読取: ${escapeHtml(matched.name)}（${escapeHtml(matched.maker)} / 定価 ${formatYen(matched.listPrice)}）</div>`;
+      } else if (item.name.trim()) {
+        hintHtml = `<div id="catHint_${idx}" class="catalog-nomatch-hint">※ カタログに一致データなし（作成時に¥0扱い。右上の参照カタログから追加可能）</div>`;
+      }
+
+      return `
+        <div class="equip-row">
+          <div class="row-between" style="margin-bottom:6px;">
+            <span style="font-size:13px;font-weight:700;color:var(--blue);">項目 #${idx + 1}</span>
+            <div class="row-flex">
+              <button class="btn-secondary" style="padding:4px 8px;font-size:12px;" onclick="openCatalogPickerForRow(${idx})">📖 カタログ選択</button>
+              <button class="btn-danger-soft" style="padding:4px 8px;font-size:12px;" onclick="removeEstimateRow(${idx})">削除</button>
+            </div>
           </div>
-        </div>
-        <input
-          type="text"
-          class="form-control"
-          placeholder="器具（内容）名"
-          value="${escapeHtml(item.name)}"
-          oninput="route.estDraft.items[${idx}].name = this.value"
-        />
-        <div class="equip-row-grid">
           <input
             type="text"
             class="form-control"
-            placeholder="メーカー"
-            value="${escapeHtml(item.maker)}"
-            oninput="route.estDraft.items[${idx}].maker = this.value"
+            placeholder="器具（内容）名"
+            value="${escapeHtml(item.name)}"
+            oninput="updateEstimateItemField(${idx}, 'name', this.value)"
           />
-          <div class="row-flex">
+          <div class="equip-row-grid">
             <input
-              type="number"
-              inputmode="numeric"
-              min="1"
+              type="text"
               class="form-control"
-              placeholder="個数"
-              value="${item.qty}"
-              oninput="route.estDraft.items[${idx}].qty = Number(this.value) || 1"
+              placeholder="メーカー"
+              value="${escapeHtml(item.maker)}"
+              oninput="updateEstimateItemField(${idx}, 'maker', this.value)"
             />
-            <span style="font-size:14px;font-weight:600;white-space:nowrap;">個</span>
+            <div class="row-flex">
+              <input
+                type="number"
+                inputmode="numeric"
+                min="1"
+                class="form-control"
+                placeholder="個数"
+                value="${item.qty}"
+                oninput="updateEstimateItemField(${idx}, 'qty', Number(this.value) || 1)"
+              />
+              <span style="font-size:14px;font-weight:600;white-space:nowrap;">個</span>
+            </div>
           </div>
+          ${hintHtml}
         </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
 
     return `
       <div class="header">
@@ -1718,7 +1832,7 @@
 
       <div class="content">
         <div class="section-header">
-          <span>器具・内容の入力</span>
+          <span>器具・内容の入力（カタログ自動照合）</span>
           <button class="btn-secondary" onclick="addEstimateRow()">＋ 行を追加</button>
         </div>
 
@@ -1809,13 +1923,7 @@
     let materialTotal = 0;
 
     const calculatedLines = route.estDraft.items.map(item => {
-      // 参照カタログから器具名・メーカー一致検索（部分一致も許容）
-      const matched = state.catalogItems.find(c =>
-        c.name.trim() === item.name.trim() && (!item.maker.trim() || c.maker.trim() === item.maker.trim())
-      ) || state.catalogItems.find(c =>
-        c.name.includes(item.name.trim()) || item.name.trim().includes(c.name)
-      );
-
+      const matched = findCatalogMatch(item.name, item.maker);
       const listPrice = matched ? matched.listPrice : 0;
       const unitPrice = Math.round(listPrice * rate);
       const qty = Number(item.qty) || 1;
@@ -1888,7 +1996,7 @@
                       <div style="font-size:11px;color:var(--text-sub);">
                         ${escapeHtml(line.maker)}
                         ${line.foundInCatalog
-                          ? `（定価 ${formatYen(line.listPrice)}）`
+                          ? `（カタログ読取 定価 ${formatYen(line.listPrice)}）`
                           : `<span style="color:var(--red);">※カタログ未登録(¥0)</span>`}
                       </div>
                     </td>
